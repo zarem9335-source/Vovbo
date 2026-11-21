@@ -1,0 +1,100 @@
+name: Build VPNSOPR Turbo APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Initialize Android wrapper and organize project structure
+        run: |
+          flutter create --platforms=android --org com.vpnsopr --project-name vpn_sopr_gaming .
+          mkdir -p lib/models lib/services lib/theme lib/screens lib/widgets assets android/app/src/main
+          [ -f logo.jpg ] && mv -f logo.jpg assets/logo.jpg
+          [ -f main.dart ] && mv -f main.dart lib/main.dart
+          [ -f vpn_config.dart ] && mv -f vpn_config.dart lib/models/vpn_config.dart
+          [ -f vpn_engine_service.dart ] && mv -f vpn_engine_service.dart lib/services/vpn_engine_service.dart
+          [ -f dragon_theme.dart ] && mv -f dragon_theme.dart lib/theme/dragon_theme.dart
+          [ -f ping_chart.dart ] && mv -f ping_chart.dart lib/widgets/ping_chart.dart
+          [ -f auth_screen.dart ] && mv -f auth_screen.dart lib/screens/auth_screen.dart
+          [ -f dashboard_screen.dart ] && mv -f dashboard_screen.dart lib/screens/dashboard_screen.dart
+          [ -f shop_screen.dart ] && mv -f shop_screen.dart lib/screens/shop_screen.dart
+          [ -f configs_screen.dart ] && mv -f configs_screen.dart lib/screens/configs_screen.dart
+          [ -f subscriptions_screen.dart ] && mv -f subscriptions_screen.dart lib/screens/subscriptions_screen.dart
+          [ -f admin_panel_screen.dart ] && mv -f admin_panel_screen.dart lib/screens/admin_panel_screen.dart
+          [ -f web_tunnel_screen.dart ] && mv -f web_tunnel_screen.dart lib/screens/web_tunnel_screen.dart
+          [ -f tickets_screen.dart ] && mv -f tickets_screen.dart lib/screens/tickets_screen.dart
+          [ -f qr_scanner_screen.dart ] && mv -f qr_scanner_screen.dart lib/screens/qr_scanner_screen.dart
+          [ -f logs_screen.dart ] && mv -f logs_screen.dart lib/screens/logs_screen.dart
+          [ -f settings_screen.dart ] && mv -f settings_screen.dart lib/screens/settings_screen.dart
+          [ -f AndroidManifest.xml ] && mv -f AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          [ -f gradle.properties ] && mv -f gradle.properties android/gradle.properties
+          [ -f build.gradle ] && mv -f build.gradle android/app/build.gradle
+
+      - name: Fix MainActivity package, compatibility, icon, and Android SDK
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/vpnsopr/gaming
+          cat <<'KOTLIN' > android/app/src/main/kotlin/com/vpnsopr/gaming/MainActivity.kt
+          package com.vpnsopr.gaming
+
+          import io.flutter.embedding.android.FlutterActivity
+
+          class MainActivity: FlutterActivity()
+          KOTLIN
+
+          if [ -f assets/logo.jpg ]; then
+            for d in android/app/src/main/res/mipmap-*; do
+              convert assets/logo.jpg -resize 192x192 "$d/ic_launcher.png" 2>/dev/null || true
+            done
+          fi
+
+          python3 - <<'EOF'
+          import re, pathlib
+          for p in pathlib.Path("lib").rglob("*.dart"):
+              txt = p.read_text()
+              txt = re.sub(r'\.withValues\(alpha:\s*([^)]+)\)', r'.withOpacity(\1)', txt)
+              txt = txt.replace('CardThemeData(', 'CardTheme(')
+              p.write_text(txt)
+
+          for p in [pathlib.Path("android/app/build.gradle"), pathlib.Path("android/app/build.gradle.kts")]:
+              if p.exists():
+                  txt = p.read_text()
+                  txt = re.sub(r'(minSdk(?:Version)?\s*=?\s*)(?:flutter\.minSdkVersion|\d+)', r'\g<1>24', txt)
+                  txt = re.sub(r'(compileSdk(?:Version)?\s*=?\s*)(?:flutter\.compileSdkVersion|\d+)', r'\g<1>35', txt)
+                  if "useLegacyPackaging" not in txt and p.name == "build.gradle":
+                      txt = txt.replace("android {", "android {\n    packagingOptions {\n        jniLibs {\n            useLegacyPackaging true\n        }\n    }")
+                  p.write_text(txt)
+          EOF
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Release APK
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpnsopr-turbo-apks
+          path: build/app/outputs/flutter-apk/*.apk
+          
